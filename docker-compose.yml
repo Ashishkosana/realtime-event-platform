@@ -1,0 +1,14 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: workflow
+      POSTGRES_PASSWORD: workflow
+      POSTGRES_DB: notify
+    ports:
+      - "5432:5432"
+    volumes:
+      - notify_pg:/var/lib/postgresql/data
+
+volumes:
+  notify_pg:

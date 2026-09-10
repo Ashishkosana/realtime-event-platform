@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Event + notification pipeline — ops console</title>
+  <style>
+    :root { --bg:#101218; --ink:#e8edf2; --muted:#8b97a4; --line:#2a3340; --ok:#73b882; --bad:#d46a5c; --run:#c4a35a; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.45 ui-monospace, Menlo, Consolas, monospace; }
+    header { padding: 18px 22px; border-bottom: 1px solid var(--line); }
+    header h1 { margin: 0 0 6px; font-size: 18px; }
+    header p { margin: 0; color: var(--muted); max-width: 90ch; }
+    main { display: grid; grid-template-columns: 1fr 1fr 1fr; min-height: calc(100vh - 88px); }
+    @media (max-width: 980px) { main { grid-template-columns: 1fr; } }
+    section { padding: 16px; border-right: 1px solid var(--line); overflow: auto; }
+    h2 { font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+    label { display: block; margin: 10px 0 4px; color: var(--muted); font-size: 11px; text-transform: uppercase; }
+    input, textarea, button { font: inherit; color: var(--ink); background: #0c1016; border: 1px solid var(--line); padding: 7px 8px; width: 100%; }
+    button { width: auto; cursor: pointer; background: #1c2530; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+    .ok { color: var(--ok); } .bad { color: var(--bad); }
+    pre { white-space: pre-wrap; font-size: 12px; border: 1px solid var(--line); padding: 8px; }
+    .empty { color: var(--muted); }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Event + notification pipeline</h1>
+    <p>
+      Publish is durable first. Live clients catch up with an inbox cursor over SSE.
+      Webhooks are <span class="ok">at-least-once</span> and signed. This is not a chat app and not Kafka.
+    </p>
+  </header>
+  <main>
+    <section>
+      <h2>Publish</h2>
+      <label>Tenant</label><input id="tenant" value="acme" />
+      <label>Event type</label><input id="type" value="order.paid" />
+      <label>Idempotency key</label><input id="key" />
+      <label>Recipients (comma)</label><input id="to" value="u1,u2" />
+      <label>Payload JSON</label><textarea id="payload">{"order":"1"}</textarea>
+      <div class="row">
+        <button id="pub">Publish</button>
+        <button id="dup">Publish same key</button>
+      </div>
+      <p id="flash" class="empty"></p>
+      <pre id="result">No publish yet.</pre>
+    </section>
+    <section>
+      <h2>Inbox + SSE</h2>
+      <label>User</label><input id="user" value="u1" />
+      <label>Cursor</label><input id="cursor" value="0" />
+      <div class="row">
+        <button id="load">Load inbox</button>
+        <button id="sse">Connect SSE</button>
+        <button id="sseOff">Disconnect</button>
+      </div>
+      <div id="inbox" class="empty">No items.</div>
+      <h2>Live</h2>
+      <pre id="live" class="empty">Not connected.</pre>
+    </section>
+    <section>
+      <h2>Mute / webhook</h2>
+      <div class="row">
+        <button id="mute">Mute type for user</button>
+        <button id="unmute">Unmute</button>
+      </div>
+      <label>Webhook URL</label><input id="hook" value="fake://ok" />
+      <div class="row"><button id="setHook">Set tenant endpoint</button></div>
+      <h2>Deliveries</h2>
+      <div id="dels" class="empty">None.</div>
+    </section>
+  </main>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    let es = null;
+    $("key").value = "k-" + Math.random().toString(16).slice(2);
+
+    async function api(path, opts) {
+      const res = await fetch(path, opts);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || data.code || res.statusText);
+      return data;
+    }
+
+    async function refreshDels() {
+      const d = await api("/deliveries");
+      if (!d.deliveries.length) { $("dels").innerHTML = '<p class="empty">None.</p>'; return; }
+      $("dels").innerHTML = d.deliveries.slice(0, 20).map(x =>
+        `<div>${x.channel} <span class="${x.status==='succeeded'?'ok':'bad'}">${x.status}</span> ${x.destination}</div>`
+      ).join("");
+    }
+
+    $("pub").onclick = async () => {
+      const body = {
+        tenant: $("tenant").value, event_type: $("type").value,
+        idempotency_key: $("key").value, payload: JSON.parse($("payload").value),
+        recipients: $("to").value.split(",").map(s => s.trim()).filter(Boolean),
+      };
+      const out = await api("/events", { method: "POST", headers: {"content-type":"application/json"}, body: JSON.stringify(body) });
+      $("result").textContent = JSON.stringify(out, null, 2);
+      $("flash").textContent = out.created ? "created" : "duplicate";
+      refreshDels();
+    };
+    $("dup").onclick = () => $("pub").onclick();
+    $("load").onclick = async () => {
+      const d = await api(`/inbox?tenant=${encodeURIComponent($("tenant").value)}&user_id=${encodeURIComponent($("user").value)}`);
+      $("inbox").innerHTML = d.items.map(i => `<div>#${i.id} ${i.event_type}</div>`).join("") || '<p class="empty">Empty inbox.</p>';
+    };
+    $("sse").onclick = () => {
+      if (es) es.close();
+      const url = `/stream?tenant=${encodeURIComponent($("tenant").value)}&user_id=${encodeURIComponent($("user").value)}&cursor=${encodeURIComponent($("cursor").value)}`;
+      es = new EventSource(url);
+      $("live").textContent = "connected " + url;
+      es.onmessage = (ev) => { $("live").textContent = ev.data + "\n" + $("live").textContent; };
+      es.addEventListener("meta", (ev) => { $("live").textContent = "META " + ev.data; });
+    };
+    $("sseOff").onclick = () => { if (es) es.close(); $("live").textContent = "disconnected"; };
+    $("mute").onclick = async () => {
+      await api("/prefs/mute", { method:"POST", headers:{"content-type":"application/json"},
+        body: JSON.stringify({ tenant:$("tenant").value, user_id:$("user").value, event_type:$("type").value, muted:true })});
+      $("flash").textContent = "muted";
+    };
+    $("unmute").onclick = async () => {
+      await api("/prefs/mute", { method:"POST", headers:{"content-type":"application/json"},
+        body: JSON.stringify({ tenant:$("tenant").value, user_id:$("user").value, event_type:$("type").value, muted:false })});
+      $("flash").textContent = "unmuted";
+    };
+    $("setHook").onclick = async () => {
+      await api("/endpoints", { method:"POST", headers:{"content-type":"application/json"},
+        body: JSON.stringify({ tenant:$("tenant").value, url:$("hook").value, secret:"lab-secret" })});
+      $("flash").textContent = "endpoint set";
+    };
+    refreshDels();
+  </script>
+</body>
+</html>
