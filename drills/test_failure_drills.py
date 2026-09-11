@@ -12,9 +12,7 @@ def _drain(n: int = 200) -> None:
     settings = load_settings()
     for _ in range(n):
         with get_pool().connection() as conn:
-            conn.execute(
-                "UPDATE ntf_deliveries SET run_after = now() WHERE status = 'pending'"
-            )
+            conn.execute("UPDATE ntf_deliveries SET run_after = now() WHERE status = 'pending'")
             row = claim(conn, "drill", settings.lease_ttl_sql)
             conn.commit()
         if row is None:

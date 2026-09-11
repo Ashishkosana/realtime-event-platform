@@ -29,7 +29,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install -e ".[dev]"
-      - run: ruff check src tests drills scripts
-      - run: ruff format --check src tests drills scripts
-      - run: pytest -q
+      - name: Install
+        run: pip install -e ".[dev]"
+      - name: Lint
+        run: ruff check src tests drills scripts
+      - name: Format
+        run: ruff format --check src tests drills scripts
+      - name: Tests
+        run: pytest -q
