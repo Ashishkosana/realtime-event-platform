@@ -1,5 +1,7 @@
 # Realtime event platform
 
+> **Scope — read this first.** This is a **single-concern systems study**, not a long-lived product: 3 commits over a focused two-day sprint (10–11 Sep 2026), 8 passed in CI. It exists to implement one hard mechanism properly and to be defensible in an interview line by line. For sustained multi-month work with a real commit history, see **[career-copilot](https://github.com/Ashishkosana/career-copilot)** (49 commits, 910 tests) and **[autonomous-agent](https://github.com/Ashishkosana/autonomous-agent)** (65 commits, 428 tests).
+
 A **durable notification pipeline**: persist the event first, fan out to a per-user inbox, catch up over SSE with a cursor, deliver webhooks at-least-once. Not the workflow engine. Not the AI control plane.
 
 **Stack:** Python 3.12 · FastAPI · PostgreSQL 16 · psycopg 3 · SSE (not WebSocket)
